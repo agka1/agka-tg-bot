@@ -1,6 +1,8 @@
 import telebot
 import google.generativeai as genai
 import os
+import threading
+from flask import Flask
 
 # --- ЗАГРУЗКА КЛЮЧЕЙ ---
 # Безопасно получаем ключи из переменных окружения
@@ -16,6 +18,25 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 # Проверяем, что ключи загружены
 if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
     raise ValueError("Необходимо установить переменные окружения TELEGRAM_BOT_TOKEN и GEMINI_API_KEY")
+
+
+# --- ЧАСТЬ С МИНИ-ВЕБ-СЕРВЕРОМ (ДЛЯ AZURE) ---
+
+# Создаем экземпляр веб-приложения Flask
+
+app = Flask(__name__)
+
+@app.route('/')
+
+def hello_world():
+    # Этот маршрут будет отвечать на HTTP-пинги от Azure
+    return 'Bot is alive!'
+
+
+def run_web_server():
+    # Запускаем веб-сервер на порту, который слушает Azure
+    # Используем 0.0.0.0, чтобы он был доступен извне контейнера
+    app.run(host='0.0.0.0', port=8000)
 
 # Инициализация бота и модели Gemini
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
@@ -38,6 +59,14 @@ def get_gemini_response(message):
         bot.edit_message_text(chat_id=message.chat.id, message_id=thinking_message.message_id, text=f"Произошла ошибка: {e}")
 
 
-# --- ЗАПУСК ---
-print("Бот запущен...")
-bot.polling(none_stop=True)
+# --- ЗАПУСК ВСЕГО ВМЕСТЕ ---
+if __name__ == "__main__":
+    # Запускаем веб-сервер в отдельном фоновом потоке
+    # daemon=True означает, что поток закроется вместе с основной программой
+    web_thread = threading.Thread(target=run_web_server)
+    web_thread.daemon = True
+    web_thread.start()
+
+    # Запускаем бота в основном потоке
+    print("Бот и веб-сервер для Azure запущены...")
+    bot.polling(none_stop=True)

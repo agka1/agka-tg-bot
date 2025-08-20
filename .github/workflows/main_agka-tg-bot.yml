@@ -32,4 +32,3 @@ jobs:
         with:
           app-name: 'agka-tg-bot'
           slot-name: 'Production'
-          package: . # Отправляем содержимое текущей папки

@@ -70,3 +70,4 @@ if __name__ == "__main__":
     # Запускаем бота в основном потоке
     print("Бот и веб-сервер для Azure запущены...")
     bot.polling(none_stop=True)
+    # Final build

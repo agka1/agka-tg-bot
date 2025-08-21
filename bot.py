@@ -4,9 +4,23 @@ import os
 import threading
 from flask import Flask
 import logging
+import sys
+import time
 
-# Настраиваем логирование, чтобы видеть все сообщения
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# --- ЯВНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ДЛЯ AZURE ---
+# Создаем логгер
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Создаем обработчик, который будет писать логи в стандартный вывод (stdout)
+# Это то, что Azure Log Stream читает по умолчанию
+handler = logging.StreamHandler(sys.stdout)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+# Добавляем обработчик к логгеру
+logger.addHandler(handler)
+
 
 # --- ЗАГРУЗКА КЛЮЧЕЙ ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
@@ -20,27 +34,27 @@ def hello_world():
 
 def run_web_server():
     try:
-        # Используем 8080 порт, стандартный для Web Apps, чтобы избежать конфликтов
-        app.run(host='0.0.0.0', port=8080)
+        # Используем порт 8000, так как мы его настроили в Azure
+        app.run(host='0.0.0.0', port=8000)
     except Exception as e:
-        logging.error(f"Ошибка в веб-сервере: {e}", exc_info=True)
+        logger.error(f"Ошибка в веб-сервере: {e}", exc_info=True)
 
 # --- ОСНОВНАЯ ЧАСТЬ БОТА ---
 # --- ЗАПУСК ВСЕГО ВМЕСТЕ ---
 if __name__ == "__main__":
     try:
-        logging.info("Скрипт запускается...")
+        logger.info("Скрипт запускается...")
 
         if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
             raise ValueError("ОШИБКА: Один или оба API-ключа не найдены в переменных окружения.")
         
-        logging.info("API ключи успешно загружены.")
+        logger.info("API ключи успешно загружены.")
 
         bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
         
-        logging.info("Инициализация бота и модели Gemini прошла успешно.")
+        logger.info("Инициализация бота и модели Gemini прошла успешно.")
 
         @bot.message_handler(commands=['start'])
         def send_welcome(message):
@@ -53,22 +67,21 @@ if __name__ == "__main__":
                 response = model.generate_content(message.text)
                 bot.edit_message_text(chat_id=message.chat.id, message_id=thinking_message.message_id, text=response.text)
             except Exception as e:
-                logging.error(f"Ошибка при генерации ответа Gemini: {e}", exc_info=True)
+                logger.error(f"Ошибка при генерации ответа Gemini: {e}", exc_info=True)
                 bot.edit_message_text(chat_id=message.chat.id, message_id=thinking_message.message_id, text=f"Произошла ошибка при обращении к Gemini.")
 
         # Запускаем веб-сервер в отдельном фоновом потоке
         web_thread = threading.Thread(target=run_web_server)
         web_thread.daemon = True
         web_thread.start()
-        logging.info("Веб-сервер для Azure запущен в фоновом потоке.")
+        logger.info("Веб-сервер для Azure запущен в фоновом потоке.")
 
         # Запускаем бота в основном потоке
-        logging.info("Запускаем бота (polling)...")
+        logger.info("Запускаем бота (polling)...")
         bot.polling(none_stop=True)
 
     except Exception as e:
         # ЭТОТ БЛОК ПОЙМАЕТ ЛЮБУЮ ОШИБКУ ПРИ ЗАПУСКЕ И ВЫВЕДЕТ ЕЕ
-        logging.error(f"КРИТИЧЕСКАЯ ОШИБКА ПРИ ЗАПУСКЕ БОТА: {e}", exc_info=True)
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА ПРИ ЗАПУСКЕ БОТА: {e}", exc_info=True)
         # Добавляем задержку, чтобы лог успел записаться
-        import time
         time.sleep(60)

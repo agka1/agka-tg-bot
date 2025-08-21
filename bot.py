@@ -21,7 +21,7 @@ def hello_world():
 def run_web_server():
     try:
         # Используем 8080 порт, стандартный для Web Apps, чтобы избежать конфликтов
-        app.run(host='0.0.0.0', port=8080)
+        app.run(host='0.0.0.0', port=8000)
     except Exception as e:
         logging.error(f"Ошибка в веб-сервере: {e}", exc_info=True)
 

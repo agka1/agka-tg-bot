@@ -6,6 +6,7 @@ from flask import Flask
 import logging
 import sys
 import time
+from telebot import types
 
 # --- ЯВНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ДЛЯ AZURE ---
 logger = logging.getLogger(__name__)
@@ -18,11 +19,16 @@ logger.addHandler(handler)
 # --- КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-MAX_HISTORY_LENGTH = 30  # Максимальное количество сообщений в истории (пользователь + бот)
+MAX_HISTORY_LENGTH = 30
 
-# --- ХРАНИЛИЩЕ ИСТОРИИ ДИАЛОГОВ ---
-# Используем словарь, где ключ - это ID чата, а значение - список сообщений
+# --- КОНСТАНТЫ МОДЕЛЕЙ ---
+MODEL_FLASH = 'gemini-1.5-flash'
+MODEL_PRO = 'gemini-1.5-pro'
+DEFAULT_MODEL_NAME = 'flash'
+
+# --- ХРАНИЛИЩА ДАННЫХ В ПАМЯТИ ---
 user_histories = {}
+user_model_choices = {}
 
 # --- ВЕБ-СЕРВЕР ДЛЯ AZURE ---
 app = Flask(__name__)
@@ -48,59 +54,81 @@ if __name__ == "__main__":
 
         bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
         
-        logger.info("Инициализация бота и модели Gemini прошла успешно.")
+        logger.info("Инициализация бота прошла успешно.")
 
         # --- ОБРАБОТЧИКИ КОМАНД ---
 
         @bot.message_handler(commands=['start'])
         def send_welcome(message):
-            bot.reply_to(message, "Привет! Я твой ассистент на базе Google Gemini. Я запоминаю контекст нашего диалога. Чтобы начать заново, используй команду /reset.")
+            bot.reply_to(message, "Привет! Я ассистент на базе Google Gemini.\n\n"
+                                  "Я запоминаю контекст нашего диалога.\n"
+                                  "Чтобы начать заново, используй /reset.\n"
+                                  "Чтобы выбрать модель (быструю или мощную), используй /model.")
 
         @bot.message_handler(commands=['reset'])
         def reset_history(message):
             user_id = message.chat.id
             if user_id in user_histories:
                 user_histories.pop(user_id)
-                bot.reply_to(message, "История диалога сброшена. Начинаем с чистого листа!")
-            else:
-                bot.reply_to(message, "У нас еще не было диалога. Просто напиши мне что-нибудь.")
+            bot.reply_to(message, "История диалога сброшена. Начинаем с чистого листа!")
+
+        @bot.message_handler(commands=['model'])
+        def select_model(message):
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            # --- ИЗМЕНЕНИЕ ЭМОДЗИ ---
+            btn_flash = types.InlineKeyboardButton("⚡️ Flash (Быстрый)", callback_data='select_flash')
+            btn_pro = types.InlineKeyboardButton("💎 Pro (Мощный)", callback_data='select_pro') # <-- Заменили эмодзи
+            markup.add(btn_flash, btn_pro)
+            
+            user_id = message.chat.id
+            current_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
+            bot.send_message(user_id, f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель для диалога:", 
+                             reply_markup=markup, parse_mode='Markdown')
+
+        @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
+        def handle_model_selection(call):
+            user_id = call.message.chat.id
+            model_text = ""
+            if call.data == 'select_flash':
+                user_model_choices[user_id] = 'flash'
+                model_text = "⚡️ Flash"
+            elif call.data == 'select_pro':
+                user_model_choices[user_id] = 'pro'
+                model_text = "💎 Pro" # <-- Заменили эмодзи
+
+            bot.answer_callback_query(call.id, text=f"Выбрана модель {model_text}")
+            bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, 
+                                  text=f"Отлично! Теперь мы используем модель: *{model_text}*", parse_mode='Markdown')
 
         @bot.message_handler(func=lambda message: True)
         def get_gemini_response(message):
             user_id = message.chat.id
-            thinking_message = bot.reply_to(message, "🧠 Думаю с учетом контекста...")
+            # --- ИЗМЕНЕНИЕ ЭМОДЗИ ---
+            thinking_message = bot.reply_to(message, "⏳ Думаю с учетом контекста...") # <-- Заменили эмодзи
 
             try:
-                # 1. Получаем или создаем историю для пользователя
-                history = user_histories.get(user_id, [])
+                chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
+                if chosen_model_name == 'pro':
+                    model = genai.GenerativeModel(MODEL_PRO)
+                else:
+                    model = genai.GenerativeModel(MODEL_FLASH)
 
-                # 2. Добавляем новое сообщение пользователя в историю
-                # Формат Gemini: {'role': 'user'/'model', 'parts': [текст]}
+                history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
 
-                # 3. Отправляем всю историю в Gemini
                 response = model.generate_content(history)
                 
-                # 4. Добавляем ответ модели в историю
-                # Важно: нужно проверить, что у ответа есть текст, чтобы избежать ошибок
                 if response.parts:
                     bot_response_text = response.parts[0].text
                     history.append({'role': 'model', 'parts': [bot_response_text]})
                 else:
-                    # Если Gemini вернул пустой ответ (например, из-за фильтров безопасности)
                     bot_response_text = "Я не могу ответить на это. Попробуй переформулировать."
-                    # Не добавляем пустой ответ в историю, чтобы не портить контекст
                 
-                # 5. Обрезаем историю, если она стала слишком длинной
                 while len(history) > MAX_HISTORY_LENGTH:
-                    history.pop(0) # Удаляем самое старое сообщение
+                    history.pop(0)
 
-                # 6. Сохраняем обновленную историю
                 user_histories[user_id] = history
-
-                # 7. Отправляем ответ пользователю
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=bot_response_text)
 
             except Exception as e:

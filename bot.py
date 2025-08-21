@@ -133,7 +133,13 @@ if __name__ == "__main__":
 
             except Exception as e:
                 logger.error(f"Ошибка при генерации ответа Gemini: {e}", exc_info=True)
-                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=f"Произошла ошибка при обращении к Gemini.")
+                error_text = str(e).lower()
+                # Проверяем, является ли ошибка ошибкой лимита запросов
+                if "resource has been exhausted" in error_text or "rate limit" in error_text:
+                    response_text = "Слишком много запросов! 🌪️ Пожалуйста, подождите минуту и попробуйте снова."
+                else:
+                    response_text = "Произошла ошибка при обращении к Gemini. Попробуйте позже."
+                bot.edit_message_text(chat_id=message.chat.id, message_id=thinking_message.message_id, text=response_text)
 
         # --- ЗАПУСК ---
         web_thread = threading.Thread(target=run_web_server)

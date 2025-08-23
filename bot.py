@@ -130,6 +130,8 @@ if __name__ == "__main__":
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
                 response = model.generate_content(history)
+                if response.prompt_feedback:
+                    logger.info(f"Safety Feedback для пользователя {user_id}: {response.prompt_feedback}")
                 if response.parts:
                     bot_response_text = response.parts[0].text
                     history.append({'role': 'model', 'parts': [bot_response_text]})

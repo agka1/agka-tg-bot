@@ -18,14 +18,14 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-# --- КОНФИГУРАЦИЯ ---
+# --- КОНФИГУРАРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 MAX_HISTORY_LENGTH = 30
 
-# --- КОНСТАНТЫ МОДЕЛЕЙ (используются самые актуальные доступные модели) ---
+# --- КОНСТАНТЫ МОДЕЛЕЙ ---
 MODEL_FLASH = 'gemini-1.5-flash'
-MODEL_PRO = 'gemini-2.5-pro'
+MODEL_PRO = 'gemini-1.5-pro'
 DEFAULT_MODEL_NAME = 'flash'
 
 # --- ХРАНИЛИЩА ДАННЫХ В ПАМЯТИ ---
@@ -83,9 +83,13 @@ if __name__ == "__main__":
                 btn_flash = types.InlineKeyboardButton("⚡️ Flash (Быстрый)", callback_data='select_flash')
                 btn_pro = types.InlineKeyboardButton("💎 Pro (Мощный)", callback_data='select_pro')
                 markup.add(btn_flash, btn_pro)
+                
                 user_id = message.chat.id
                 current_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
-                bot.send_message(user_id, f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель для диалога:", 
+                
+                # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                text_to_send = f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель для диалога:"
+                bot.send_message(user_id, to_telegram_markdown(text_to_send), 
                                  reply_markup=markup, parse_mode='MarkdownV2')
 
         @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
@@ -98,9 +102,13 @@ if __name__ == "__main__":
             elif call.data == 'select_pro':
                 user_model_choices[user_id] = 'pro'
                 model_text = "💎 Pro"
+
             bot.answer_callback_query(call.id, text=f"Выбрана модель {model_text}")
+            
+            # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+            text_to_send = f"Отлично! Теперь мы используем модель: *{model_text}*"
             bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, 
-                                  text=f"Отлично! Теперь мы используем модель: *{model_text}*", parse_mode='MarkdownV2')
+                                  text=to_telegram_markdown(text_to_send), parse_mode='MarkdownV2')
 
         @bot.message_handler(func=lambda message: True)
         def get_gemini_response(message):

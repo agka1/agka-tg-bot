@@ -25,7 +25,7 @@ MAX_HISTORY_LENGTH = 30
 
 # --- КОНСТАНТЫ МОДЕЛЕЙ ---
 MODEL_FLASH = 'gemini-1.5-flash'
-MODEL_PRO = 'gemini-1.5-pro'
+MODEL_PRO = 'gemini-2.5-pro'
 DEFAULT_MODEL_NAME = 'flash'
 
 # --- ХРАНИЛИЩА ДАННЫХ В ПАМЯТИ ---

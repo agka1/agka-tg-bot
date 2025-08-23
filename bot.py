@@ -7,6 +7,8 @@ import logging
 import sys
 import time
 from telebot import types
+import re
+from google.api_core import exceptions as google_exceptions
 
 # --- ЯВНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ДЛЯ AZURE ---
 logger = logging.getLogger(__name__)
@@ -21,14 +23,20 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 MAX_HISTORY_LENGTH = 30
 
-# --- КОНСТАНТЫ МОДЕЛЕЙ ---
+# --- КОНСТАНТЫ МОДЕЛЕЙ (используются самые актуальные доступные модели) ---
 MODEL_FLASH = 'gemini-1.5-flash'
-MODEL_PRO = 'gemini-1.5-pro'
+MODEL_PRO = 'gemini-2.5-pro'
 DEFAULT_MODEL_NAME = 'flash'
 
 # --- ХРАНИЛИЩА ДАННЫХ В ПАМЯТИ ---
 user_histories = {}
 user_model_choices = {}
+
+# --- ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ MARKDOWN ---
+def to_telegram_markdown(text):
+    text = text.replace('**', '*')
+    special_chars = r"([.>#+-=|{!}])"
+    return re.sub(special_chars, r'\\\1', text)
 
 # --- ВЕБ-СЕРВЕР ДЛЯ AZURE ---
 app = Flask(__name__)
@@ -58,33 +66,27 @@ if __name__ == "__main__":
         logger.info("Инициализация бота прошла успешно.")
 
         # --- ОБРАБОТЧИКИ КОМАНД ---
-
-        @bot.message_handler(commands=['start'])
-        def send_welcome(message):
-            bot.reply_to(message, "Привет! Я ассистент на базе Google Gemini.\n\n"
-                                  "Я запоминаю контекст нашего диалога.\n"
-                                  "Чтобы начать заново, используй /reset.\n"
-                                  "Чтобы выбрать модель (быструю или мощную), используй /model.")
-
-        @bot.message_handler(commands=['reset'])
-        def reset_history(message):
-            user_id = message.chat.id
-            if user_id in user_histories:
-                user_histories.pop(user_id)
-            bot.reply_to(message, "История диалога сброшена. Начинаем с чистого листа!")
-
-        @bot.message_handler(commands=['model'])
-        def select_model(message):
-            markup = types.InlineKeyboardMarkup(row_width=2)
-            # --- ИЗМЕНЕНИЕ ЭМОДЗИ ---
-            btn_flash = types.InlineKeyboardButton("⚡️ Flash (Быстрый)", callback_data='select_flash')
-            btn_pro = types.InlineKeyboardButton("💎 Pro (Мощный)", callback_data='select_pro') # <-- Заменили эмодзи
-            markup.add(btn_flash, btn_pro)
-            
-            user_id = message.chat.id
-            current_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
-            bot.send_message(user_id, f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель для диалога:", 
-                             reply_markup=markup, parse_mode='Markdown')
+        @bot.message_handler(commands=['start', 'reset', 'model'])
+        def handle_commands(message):
+            if message.text == '/start':
+                bot.reply_to(message, "Привет! Я ассистент на базе Google Gemini.\n\n"
+                                      "Я запоминаю контекст нашего диалога.\n"
+                                      "Чтобы начать заново, используй /reset.\n"
+                                      "Чтобы выбрать модель (быструю или мощную), используй /model.")
+            elif message.text == '/reset':
+                user_id = message.chat.id
+                if user_id in user_histories:
+                    user_histories.pop(user_id)
+                bot.reply_to(message, "История диалога сброшена. Начинаем с чистого листа!")
+            elif message.text == '/model':
+                markup = types.InlineKeyboardMarkup(row_width=2)
+                btn_flash = types.InlineKeyboardButton("⚡️ Flash (Быстрый)", callback_data='select_flash')
+                btn_pro = types.InlineKeyboardButton("💎 Pro (Мощный)", callback_data='select_pro')
+                markup.add(btn_flash, btn_pro)
+                user_id = message.chat.id
+                current_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
+                bot.send_message(user_id, f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель для диалога:", 
+                                 reply_markup=markup, parse_mode='MarkdownV2')
 
         @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
         def handle_model_selection(call):
@@ -95,24 +97,19 @@ if __name__ == "__main__":
                 model_text = "⚡️ Flash"
             elif call.data == 'select_pro':
                 user_model_choices[user_id] = 'pro'
-                model_text = "💎 Pro" # <-- Заменили эмодзи
-
+                model_text = "💎 Pro"
             bot.answer_callback_query(call.id, text=f"Выбрана модель {model_text}")
             bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, 
-                                  text=f"Отлично! Теперь мы используем модель: *{model_text}*", parse_mode='Markdown')
+                                  text=f"Отлично! Теперь мы используем модель: *{model_text}*", parse_mode='MarkdownV2')
 
         @bot.message_handler(func=lambda message: True)
         def get_gemini_response(message):
             user_id = message.chat.id
-            # --- ИЗМЕНЕНИЕ ЭМОДЗИ ---
-            thinking_message = bot.reply_to(message, "⏳ Думаю с учетом контекста...") # <-- Заменили эмодзи
+            thinking_message = bot.reply_to(message, "⏳ Думаю с учетом контекста...")
 
             try:
                 chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
-                if chosen_model_name == 'pro':
-                    model = genai.GenerativeModel(MODEL_PRO)
-                else:
-                    model = genai.GenerativeModel(MODEL_FLASH)
+                model = genai.GenerativeModel(MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH)
 
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
@@ -129,17 +126,20 @@ if __name__ == "__main__":
                     history.pop(0)
 
                 user_histories[user_id] = history
-                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=bot_response_text)
+                
+                formatted_text = to_telegram_markdown(bot_response_text)
+                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, 
+                                      text=formatted_text, parse_mode='MarkdownV2')
 
+            except google_exceptions.ResourceExhausted as e:
+                logger.warning(f"Достигнут лимит запросов к Gemini API: {e}")
+                response_text = "Слишком много запросов! 🌪️ Пожалуйста, подождите минуту и попробуйте снова."
+                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=response_text)
+            
             except Exception as e:
-                logger.error(f"Ошибка при генерации ответа Gemini: {e}", exc_info=True)
-                error_text = str(e).lower()
-                # Проверяем, является ли ошибка ошибкой лимита запросов
-                if "resource has been exhausted" in error_text or "rate limit" in error_text:
-                    response_text = "Слишком много запросов! 🌪️ Пожалуйста, подождите минуту и попробуйте снова."
-                else:
-                    response_text = "Произошла ошибка при обращении к Gemini. Попробуйте позже."
-                bot.edit_message_text(chat_id=message.chat.id, message_id=thinking_message.message_id, text=response_text)
+                logger.error(f"Непредвиденная ошибка при генерации ответа Gemini: {e}", exc_info=True)
+                response_text = "Произошла непредвиденная ошибка при обращении к Gemini. Попробуйте позже."
+                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=response_text)
 
         # --- ЗАПУСК ---
         web_thread = threading.Thread(target=run_web_server)

@@ -36,7 +36,7 @@ user_model_choices = {}
 # --- ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ MARKDOWN ---
 def to_telegram_markdown(text):
     text = text.replace('**', '*')
-    special_chars = r"([.>#+-=|{!}])"
+    special_chars = r"([.>#+-=|{!}()])" 
     return re.sub(special_chars, r'\\\1', text)
 
 # --- ВЕБ-СЕРВЕР ДЛЯ AZURE ---

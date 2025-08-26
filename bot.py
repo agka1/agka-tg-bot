@@ -1,6 +1,6 @@
 import telebot
 import google.generativeai as genai
-from google.generativeai import types as genai_types
+# genai_types больше не импортируется
 import os
 import threading
 from flask import Flask
@@ -12,6 +12,7 @@ from telebot.types import BotCommand
 import re
 from google.api_core import exceptions as google_exceptions
 
+# --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
@@ -35,7 +36,6 @@ def to_telegram_markdown(text):
     special_chars = r"([.>#+-=|{!}()])"
     return re.sub(special_chars, r'\\\1', text)
 
-# --- ВЕБ-СЕРВЕР ---
 app = Flask(__name__)
 @app.route('/')
 def hello_world():
@@ -63,13 +63,11 @@ if __name__ == "__main__":
         logger.info("Инициализация бота прошла успешно.")
 
         try:
-            logger.info("Установка команд бота...")
             bot.set_my_commands([
                 BotCommand('start', 'Запустить бота'),
                 BotCommand('reset', 'Сбросить историю диалога'),
                 BotCommand('model', 'Выбрать модель Gemini')
             ])
-            logger.info("Команды бота успешно установлены.")
         except Exception as e:
             logger.error(f"Не удалось установить команды бота: {e}")
 
@@ -115,21 +113,18 @@ if __name__ == "__main__":
             user_id = message.chat.id
             thinking_message = bot.reply_to(message, "⏳ Думаю и ищу в интернете...")
             try:
-                grounding_tool = genai_types.Tool(
-                    google_search=genai_types.GoogleSearch()
-                )
-
+                # --- ВОТ ИСПРАВЛЕННАЯ ЛОГИКА ---
                 chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
                 model_name = MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH
-                model = genai.GenerativeModel(model_name)
+                
+                # Подключаем инструмент поиска прямо при создании модели
+                model = genai.GenerativeModel(model_name, tools=['google_search'])
 
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
                 
-                response = model.generate_content(
-                    history,
-                    tools=[grounding_tool]
-                )
+                # Теперь не нужно передавать 'tools' в generate_content
+                response = model.generate_content(history)
 
                 if response.prompt_feedback:
                     logger.info(f"Safety Feedback для {user_id}: {response.prompt_feedback}")

@@ -1,4 +1,4 @@
-name: Build and Deploy Python app to Azure Web App
+name: Build, Stop, Deploy, and Start Python app on Azure
 
 on:
   push:
@@ -60,6 +60,14 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_3E2AB6118369497F8F3580D1100DC99B }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7683B639F799416E85632E1D3075235C }}
 
+      # ШАГ 1: Принудительно останавливаем приложение перед развертыванием
+      - name: Stop Azure Web App
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az webapp stop --name 'agka-tg-bot' --resource-group 'agka-tg-bot'
+
+      # ШАГ 2: Разворачиваем новый код
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
@@ -67,3 +75,10 @@ jobs:
           app-name: 'agka-tg-bot'
           slot-name: 'Production'
           package: release.zip
+
+      # ШАГ 3: Запускаем приложение с новым кодом
+      - name: Start Azure Web App
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az webapp start --name 'agka-tg-bot' --resource-group 'agka-tg-bot'

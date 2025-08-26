@@ -1,6 +1,5 @@
 import telebot
 import google.generativeai as genai
-# --- ИЗМЕНЕНИЕ 1: Импортируем 'types' для настройки поиска ---
 from google.generativeai import types as genai_types
 import os
 import threading
@@ -13,7 +12,6 @@ from telebot.types import BotCommand
 import re
 from google.api_core import exceptions as google_exceptions
 
-# --- ЯВНАЯ НАСТРОЙКА ЛОГИРОВАНИЯ ДЛЯ AZURE ---
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
@@ -21,7 +19,6 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-# --- КОНФИГУРАЦИЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 MAX_HISTORY_LENGTH = 30
@@ -33,13 +30,12 @@ DEFAULT_MODEL_NAME = 'flash'
 user_histories = {}
 user_model_choices = {}
 
-# --- ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ MARKDOWN ---
 def to_telegram_markdown(text):
     text = text.replace('**', '*')
     special_chars = r"([.>#+-=|{!}()])"
     return re.sub(special_chars, r'\\\1', text)
 
-# --- ВЕБ-СЕРВЕР ДЛЯ AZURE ---
+# --- ВЕБ-СЕРВЕР ---
 app = Flask(__name__)
 @app.route('/')
 def hello_world():
@@ -57,7 +53,7 @@ if __name__ == "__main__":
         logger.info("Скрипт запускается...")
 
         if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
-            raise ValueError("ОШИБКА: Один или оба API-ключа не найдены в переменных окружения.")
+            raise ValueError("ОШИБКА: API-ключи не найдены в переменных окружения.")
         
         logger.info("API ключи успешно загружены.")
 
@@ -69,27 +65,24 @@ if __name__ == "__main__":
         try:
             logger.info("Установка команд бота...")
             bot.set_my_commands([
-                BotCommand('start', 'Запустить бота и показать приветствие'),
+                BotCommand('start', 'Запустить бота'),
                 BotCommand('reset', 'Сбросить историю диалога'),
-                BotCommand('model', 'Выбрать модель Gemini (Flash/Pro)')
+                BotCommand('model', 'Выбрать модель Gemini')
             ])
             logger.info("Команды бота успешно установлены.")
         except Exception as e:
             logger.error(f"Не удалось установить команды бота: {e}")
 
-        # --- ОБРАБОТЧИКИ КОМАНД ---
         @bot.message_handler(commands=['start', 'reset', 'model'])
         def handle_commands(message):
             if message.text == '/start':
-                bot.reply_to(message, "Привет! Я ассистент на базе Google Gemini.\n\n"
-                                      "Теперь я могу искать информацию в интернете!\n"
-                                      "Чтобы начать заново, используй /reset.\n"
-                                      "Чтобы выбрать модель (быструю или мощную), используй /model.")
+                bot.reply_to(message, "Привет! Я ассистент на базе Google Gemini с доступом в интернет.\n\n"
+                                      "Используйте /reset, чтобы сбросить диалог, и /model для выбора модели.")
             elif message.text == '/reset':
                 user_id = message.chat.id
                 if user_id in user_histories:
                     user_histories.pop(user_id)
-                bot.reply_to(message, "История диалога сброшена. Начинаем с чистого листа!")
+                bot.reply_to(message, "История диалога сброшена.")
             elif message.text == '/model':
                 markup = types.InlineKeyboardMarkup(row_width=2)
                 btn_flash = types.InlineKeyboardButton("⚡️ Flash (Быстрый)", callback_data='select_flash')
@@ -97,7 +90,7 @@ if __name__ == "__main__":
                 markup.add(btn_flash, btn_pro)
                 user_id = message.chat.id
                 current_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
-                text_to_send = f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель для диалога:"
+                text_to_send = f"Текущая модель: *{current_model_name.capitalize()}*.\n\nВыберите новую модель:"
                 bot.send_message(user_id, to_telegram_markdown(text_to_send), 
                                  reply_markup=markup, parse_mode='MarkdownV2')
 
@@ -111,8 +104,9 @@ if __name__ == "__main__":
             elif call.data == 'select_pro':
                 user_model_choices[user_id] = 'pro'
                 model_text = "💎 Pro"
+            
             bot.answer_callback_query(call.id, text=f"Выбрана модель {model_text}")
-            text_to_send = f"Отлично! Теперь мы используем модель: *{model_text}*"
+            text_to_send = f"Отлично! Теперь используется модель: *{model_text}*"
             bot.edit_message_text(chat_id=user_id, message_id=call.message.message_id, 
                                   text=to_telegram_markdown(text_to_send), parse_mode='MarkdownV2')
 
@@ -121,41 +115,36 @@ if __name__ == "__main__":
             user_id = message.chat.id
             thinking_message = bot.reply_to(message, "⏳ Думаю и ищу в интернете...")
             try:
-                # --- ИЗМЕНЕНИЕ 3: Активация поиска в Google ---
-                # 1. Создаем инструмент для поиска
                 grounding_tool = genai_types.Tool(
                     google_search=genai_types.GoogleSearch()
                 )
 
                 chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
-                model = genai.GenerativeModel(
-                    MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH
-                )
+                model_name = MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH
+                model = genai.GenerativeModel(model_name)
 
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
                 
-                # 2. Передаем инструмент в метод генерации
                 response = model.generate_content(
                     history,
                     tools=[grounding_tool]
                 )
 
                 if response.prompt_feedback:
-                    logger.info(f"Safety Feedback для пользователя {user_id}: {response.prompt_feedback}")
-                if response.parts:
-                    bot_response_text = response.text # Используем .text для простоты
-                    history.append({'role': 'model', 'parts': [bot_response_text]})
-                else:
-                    bot_response_text = "Я не могу ответить на это. Попробуй переформулировать."
+                    logger.info(f"Safety Feedback для {user_id}: {response.prompt_feedback}")
+                
+                bot_response_text = response.text if response.parts else "Я не могу ответить на это. Попробуйте переформулировать."
 
-                while len(history) > MAX_HISTORY_LENGTH:
-                    history.pop(0)
+                history.append({'role': 'model', 'parts': [bot_response_text]})
+                
+                if len(history) > MAX_HISTORY_LENGTH:
+                    history = history[-MAX_HISTORY_LENGTH:]
+                
                 user_histories[user_id] = history
                 
                 formatted_text = to_telegram_markdown(bot_response_text)
                 
-                # Учитываем ограничение Telegram на длину сообщения
                 if len(formatted_text) > 4096:
                     formatted_text = formatted_text[:4093] + '...'
 
@@ -164,19 +153,16 @@ if __name__ == "__main__":
                                       
             except google_exceptions.ResourceExhausted as e:
                 logger.warning(f"Достигнут лимит запросов к Gemini API: {e}")
-                response_text = "Слишком много запросов! 🌪️ Пожалуйста, подождите минуту и попробуйте снова."
-                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=response_text)
+                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text="Слишком много запросов! Пожалуйста, подождите минуту.")
             except Exception as e:
-                status_code = getattr(e, 'code', 'N/A')
-                logger.error(f"Непредвиденная ошибка при генерации ответа Gemini: (Статус {status_code}) {e}", exc_info=True)
-                response_text = "Произошла непредвиденная ошибка при обращении к Gemini. Попробуйте позже."
-                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=response_text)
+                logger.error(f"Непредвиденная ошибка при генерации ответа Gemini: {e}", exc_info=True)
+                bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text="Произошла ошибка. Попробуйте позже.")
 
         # --- ЗАПУСК ---
         web_thread = threading.Thread(target=run_web_server)
         web_thread.daemon = True
         web_thread.start()
-        logger.info("Веб-сервер для Azure запущен в фоновом потоке.")
+        logger.info("Веб-сервер запущен в фоновом потоке.")
 
         logger.info("Запускаем бота (polling)...")
         bot.polling(none_stop=True)

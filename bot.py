@@ -1,5 +1,7 @@
 import telebot
 import google.generativeai as genai
+# --- ИЗМЕНЕНИЕ 1: Импортируем 'types' для настройки поиска ---
+from google.generativeai import types as genai_types
 import os
 import threading
 from flask import Flask
@@ -7,7 +9,7 @@ import logging
 import sys
 import time
 from telebot import types
-from telebot.types import BotCommand # <-- 1. Добавляем импорт для команд
+from telebot.types import BotCommand
 import re
 from google.api_core import exceptions as google_exceptions
 
@@ -24,19 +26,17 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 MAX_HISTORY_LENGTH = 30
 
-# --- КОНСТАНТЫ МОДЕЛЕЙ ---
-MODEL_FLASH = 'gemini-1.5-flash'
+MODEL_FLASH = 'gemini-2.5-flash'
 MODEL_PRO = 'gemini-2.5-pro'
 DEFAULT_MODEL_NAME = 'flash'
 
-# --- ХРАНИЛИЩА ДАННЫХ В ПАМЯТИ ---
 user_histories = {}
 user_model_choices = {}
 
 # --- ФУНКЦИЯ ДЛЯ КОНВЕРТАЦИИ MARKDOWN ---
 def to_telegram_markdown(text):
     text = text.replace('**', '*')
-    special_chars = r"([.>#+-=|{!}()])" 
+    special_chars = r"([.>#+-=|{!}()])"
     return re.sub(special_chars, r'\\\1', text)
 
 # --- ВЕБ-СЕРВЕР ДЛЯ AZURE ---
@@ -66,7 +66,6 @@ if __name__ == "__main__":
         
         logger.info("Инициализация бота прошла успешно.")
 
-        # --- 2. УСТАНОВКА КОМАНД-ПОДСКАЗОК ДЛЯ TELEGRAM ---
         try:
             logger.info("Установка команд бота...")
             bot.set_my_commands([
@@ -81,10 +80,9 @@ if __name__ == "__main__":
         # --- ОБРАБОТЧИКИ КОМАНД ---
         @bot.message_handler(commands=['start', 'reset', 'model'])
         def handle_commands(message):
-            # ... (этот блок без изменений) ...
             if message.text == '/start':
                 bot.reply_to(message, "Привет! Я ассистент на базе Google Gemini.\n\n"
-                                      "Я запоминаю контекст нашего диалога.\n"
+                                      "Теперь я могу искать информацию в интернете!\n"
                                       "Чтобы начать заново, используй /reset.\n"
                                       "Чтобы выбрать модель (быструю или мощную), используй /model.")
             elif message.text == '/reset':
@@ -105,7 +103,6 @@ if __name__ == "__main__":
 
         @bot.callback_query_handler(func=lambda call: call.data.startswith('select_'))
         def handle_model_selection(call):
-            # ... (этот блок без изменений) ...
             user_id = call.message.chat.id
             model_text = ""
             if call.data == 'select_flash':
@@ -121,34 +118,57 @@ if __name__ == "__main__":
 
         @bot.message_handler(func=lambda message: True)
         def get_gemini_response(message):
-            # ... (этот блок без изменений) ...
             user_id = message.chat.id
-            thinking_message = bot.reply_to(message, "⏳ Думаю с учетом контекста...")
+            thinking_message = bot.reply_to(message, "⏳ Думаю и ищу в интернете...")
             try:
+                # --- ИЗМЕНЕНИЕ 3: Активация поиска в Google ---
+                # 1. Создаем инструмент для поиска
+                grounding_tool = genai_types.Tool(
+                    google_search=genai_types.GoogleSearch()
+                )
+
                 chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
-                model = genai.GenerativeModel(MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH)
+                model = genai.GenerativeModel(
+                    MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH
+                )
+
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
-                response = model.generate_content(history)
+                
+                # 2. Передаем инструмент в метод генерации
+                response = model.generate_content(
+                    history,
+                    tools=[grounding_tool]
+                )
+
                 if response.prompt_feedback:
                     logger.info(f"Safety Feedback для пользователя {user_id}: {response.prompt_feedback}")
                 if response.parts:
-                    bot_response_text = response.parts[0].text
+                    bot_response_text = response.text # Используем .text для простоты
                     history.append({'role': 'model', 'parts': [bot_response_text]})
                 else:
                     bot_response_text = "Я не могу ответить на это. Попробуй переформулировать."
+
                 while len(history) > MAX_HISTORY_LENGTH:
                     history.pop(0)
                 user_histories[user_id] = history
+                
                 formatted_text = to_telegram_markdown(bot_response_text)
+                
+                # Учитываем ограничение Telegram на длину сообщения
+                if len(formatted_text) > 4096:
+                    formatted_text = formatted_text[:4093] + '...'
+
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, 
                                       text=formatted_text, parse_mode='MarkdownV2')
+                                      
             except google_exceptions.ResourceExhausted as e:
                 logger.warning(f"Достигнут лимит запросов к Gemini API: {e}")
                 response_text = "Слишком много запросов! 🌪️ Пожалуйста, подождите минуту и попробуйте снова."
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=response_text)
             except Exception as e:
-                logger.error(f"Непредвиденная ошибка при генерации ответа Gemini: {e}", exc_info=True)
+                status_code = getattr(e, 'code', 'N/A')
+                logger.error(f"Непредвиденная ошибка при генерации ответа Gemini: (Статус {status_code}) {e}", exc_info=True)
                 response_text = "Произошла непредвиденная ошибка при обращении к Gemini. Попробуйте позже."
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text=response_text)
 

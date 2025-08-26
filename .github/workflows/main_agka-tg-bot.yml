@@ -60,7 +60,6 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_3E2AB6118369497F8F3580D1100DC99B }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_7683B639F799416E85632E1D3075235C }}
 
-      # НОВЫЙ ШАГ: Отключаем сборку на сервере Azure
       - name: Disable Build on Deploy
         uses: azure/cli@v2
         with:
@@ -73,9 +72,9 @@ jobs:
           inlineScript: |
             az webapp stop --name 'agka-tg-bot' --resource-group 'agka-tg-bot'
 
-      # НОВЫЙ ШАГ: Добавляем паузу в 30 секунд, как просит лог
-      - name: Wait for 30 seconds
-        run: sleep 30
+      # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+      - name: Wait for 60 seconds
+        run: sleep 60
 
       - name: 'Deploy to Azure Web App'
         id: deploy-to-webapp

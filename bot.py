@@ -1,6 +1,5 @@
 import telebot
 import google.generativeai as genai
-# --- ИЗМЕНЕНИЕ 1: Снова импортируем types для создания объекта Tool ---
 from google.generativeai import types as genai_types
 import os
 import threading
@@ -21,12 +20,7 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-# --- КОНФИГУРАЦІЯ ---
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-MAX_HISTORY_LENGTH = 30
-
-# --- КОНСТАНТЫ МОДЕЛЕЙ ---
+# --- КОНСТАНТЫ МОДЕЛЕЙ (оставлены как в вашем коде) ---
 MODEL_FLASH = 'gemini-2.5-flash'
 MODEL_PRO = 'gemini-2.5-pro'
 DEFAULT_MODEL_NAME = 'flash'
@@ -55,27 +49,45 @@ def run_web_server():
 # --- ОСНОВНАЯ ЧАСТЬ БОТА ---
 if __name__ == "__main__":
     try:
-        logger.info("Скрипт запускается...")
+        logger.info("--- ЗАПУСК СКРИПТА ---")
+
+        # --- НОВЫЙ ЛОГ: Проверяем наличие ключей ---
+        TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
+        GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+        
+        logger.info(f"Переменная TELEGRAM_BOT_TOKEN найдена: {TELEGRAM_BOT_TOKEN is not None}")
+        logger.info(f"Переменная GEMINI_API_KEY найдена: {GEMINI_API_KEY is not None}")
 
         if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
+            logger.error("КРИТИЧЕСКАЯ ОШИБКА: Один или оба API-ключа не найдены. Завершение работы.")
             raise ValueError("ОШИБКА: API-ключи не найдены в переменных окружения.")
         
-        logger.info("API ключи успешно загружены.")
+        logger.info("API ключи успешно прочитаны.")
 
+        # --- НОВЫЙ ЛОГ: Перед инициализацией TeleBot ---
+        logger.info("Инициализация TeleBot...")
         bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-        genai.configure(api_key=GEMINI_API_KEY)
-        
-        logger.info("Инициализация бота прошла успешно.")
+        logger.info("TeleBot успешно инициализирован.")
 
+        # --- НОВЫЙ ЛОГ: Перед конфигурацией Gemini ---
+        logger.info("Конфигурация Google Generative AI...")
+        genai.configure(api_key=GEMINI_API_KEY)
+        logger.info("Google Generative AI успешно сконфигурирован.")
+        
         try:
+            # --- НОВЫЙ ЛОГ: Перед установкой команд ---
+            logger.info("Попытка установить команды бота...")
             bot.set_my_commands([
                 BotCommand('start', 'Запустить бота'),
                 BotCommand('reset', 'Сбросить историю диалога'),
                 BotCommand('model', 'Выбрать модель Gemini')
             ])
+            logger.info("Команды бота успешно установлены.")
         except Exception as e:
-            logger.error(f"Не удалось установить команды бота: {e}")
+            logger.error(f"Не удалось установить команды бота: {e}", exc_info=True)
+            # Не прерываем работу, если команды не установились, это не критично
 
+        # ОБРАБОТЧИКИ КОМАНД (без изменений)
         @bot.message_handler(commands=['start', 'reset', 'model'])
         def handle_commands(message):
             if message.text == '/start':
@@ -120,44 +132,21 @@ if __name__ == "__main__":
             try:
                 chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
                 model_name = MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH
-                
-                # --- ИЗМЕНЕНИЕ 2: Создаем модель БЕЗ инструментов ---
                 model = genai.GenerativeModel(model_name)
-
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
-                
-                # --- ИЗМЕНЕНИЕ 3: Создаем объект Tool и передаем его в generate_content ---
-                # Это самый надежный способ, который теперь должен работать
-                tool = genai_types.Tool(
-                    google_search=genai_types.GoogleSearch()
-                )
-                
-                response = model.generate_content(
-                    history,
-                    tools=[tool]
-                )
-
-                if response.prompt_feedback:
-                    logger.info(f"Safety Feedback для {user_id}: {response.prompt_feedback}")
-                
+                tool = genai_types.Tool(google_search=genai_types.GoogleSearch())
+                response = model.generate_content(history, tools=[tool])
                 bot_response_text = response.text if response.parts else "Я не могу ответить на это. Попробуйте переформулировать."
-
                 history.append({'role': 'model', 'parts': [bot_response_text]})
-                
                 if len(history) > MAX_HISTORY_LENGTH:
                     history = history[-MAX_HISTORY_LENGTH:]
-                
                 user_histories[user_id] = history
-                
                 formatted_text = to_telegram_markdown(bot_response_text)
-                
                 if len(formatted_text) > 4096:
                     formatted_text = formatted_text[:4093] + '...'
-
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, 
                                       text=formatted_text, parse_mode='MarkdownV2')
-                                      
             except google_exceptions.ResourceExhausted as e:
                 logger.warning(f"Достигнут лимит запросов к Gemini API: {e}")
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text="Слишком много запросов! Пожалуйста, подождите минуту.")
@@ -165,15 +154,16 @@ if __name__ == "__main__":
                 logger.error(f"Непредвиденная ошибка при генерации ответа Gemini: {e}", exc_info=True)
                 bot.edit_message_text(chat_id=user_id, message_id=thinking_message.message_id, text="Произошла ошибка. Попробуйте позже.")
 
-        # --- ЗАПУСК ---
+        # --- НОВЫЙ ЛОГ: Перед запуском потоков ---
+        logger.info("Запуск веб-сервера в фоновом потоке...")
         web_thread = threading.Thread(target=run_web_server)
         web_thread.daemon = True
         web_thread.start()
-        logger.info("Веб-сервер запущен в фоновом потоке.")
+        logger.info("Веб-сервер запущен.")
 
-        logger.info("Запускаем бота (polling)...")
+        logger.info("--- ЗАПУСК БОТА (POLLING) ---")
         bot.polling(none_stop=True)
 
     except Exception as e:
-        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА ПРИ ЗАПУСКЕ БОТА: {e}", exc_info=True)
-        time.sleep(60)
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА НА ВНЕШНЕМ УРОВНЕ: {e}", exc_info=True)
+        time.sleep(60) # Даем время, чтобы лог успел записаться перед перезапуском контейнера

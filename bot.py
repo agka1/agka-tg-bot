@@ -1,6 +1,7 @@
 import telebot
 import google.generativeai as genai
-# genai_types больше не импортируется
+# --- ИЗМЕНЕНИЕ 1: Снова импортируем types для создания объекта Tool ---
+from google.generativeai import types as genai_types
 import os
 import threading
 from flask import Flask
@@ -20,14 +21,17 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+# --- КОНФИГУРАЦІЯ ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 MAX_HISTORY_LENGTH = 30
 
+# --- КОНСТАНТЫ МОДЕЛЕЙ ---
 MODEL_FLASH = 'gemini-2.5-flash'
 MODEL_PRO = 'gemini-2.5-pro'
 DEFAULT_MODEL_NAME = 'flash'
 
+# --- ХРАНИЛИЩА ДАННЫХ ---
 user_histories = {}
 user_model_choices = {}
 
@@ -36,6 +40,7 @@ def to_telegram_markdown(text):
     special_chars = r"([.>#+-=|{!}()])"
     return re.sub(special_chars, r'\\\1', text)
 
+# --- ВЕБ-СЕРВЕР ---
 app = Flask(__name__)
 @app.route('/')
 def hello_world():
@@ -113,18 +118,25 @@ if __name__ == "__main__":
             user_id = message.chat.id
             thinking_message = bot.reply_to(message, "⏳ Думаю и ищу в интернете...")
             try:
-                # --- ВОТ ИСПРАВЛЕННАЯ ЛОГИКА ---
                 chosen_model_name = user_model_choices.get(user_id, DEFAULT_MODEL_NAME)
                 model_name = MODEL_PRO if chosen_model_name == 'pro' else MODEL_FLASH
                 
-                # Подключаем инструмент поиска прямо при создании модели
-                model = genai.GenerativeModel(model_name, tools=['google_search'])
+                # --- ИЗМЕНЕНИЕ 2: Создаем модель БЕЗ инструментов ---
+                model = genai.GenerativeModel(model_name)
 
                 history = user_histories.get(user_id, [])
                 history.append({'role': 'user', 'parts': [message.text]})
                 
-                # Теперь не нужно передавать 'tools' в generate_content
-                response = model.generate_content(history)
+                # --- ИЗМЕНЕНИЕ 3: Создаем объект Tool и передаем его в generate_content ---
+                # Это самый надежный способ, который теперь должен работать
+                tool = genai_types.Tool(
+                    google_search=genai_types.GoogleSearch()
+                )
+                
+                response = model.generate_content(
+                    history,
+                    tools=[tool]
+                )
 
                 if response.prompt_feedback:
                     logger.info(f"Safety Feedback для {user_id}: {response.prompt_feedback}")

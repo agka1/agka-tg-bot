@@ -30,7 +30,8 @@ jobs:
       - name: Zip artifact for deployment
         run: |
           mkdir -p release
-          cp bot.py requirements.txt ./release/
+          # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+          cp app.py requirements.txt ./release/
           cp -r venv/lib/python3.11/site-packages/* ./release/
           cd release
           zip -r ../release.zip .
@@ -72,7 +73,6 @@ jobs:
           inlineScript: |
             az webapp stop --name 'agka-tg-bot' --resource-group 'agka-tg-bot'
 
-      # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
       - name: Wait for 60 seconds
         run: sleep 60
 
